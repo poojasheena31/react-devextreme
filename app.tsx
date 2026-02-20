@@ -5,146 +5,151 @@ import DataGrid, {
   FilterRow,
   Selection,
   Pager,
-  Lookup,
   HeaderFilter,
 } from "devextreme-react/data-grid";
 import type { DataGridTypes } from "devextreme-react/data-grid";
 import Button from "devextreme-react/button";
-import { query } from "devextreme-react/common/data";
-import { createStore } from "devextreme-aspnet-data-nojquery";
+import CustomStore from "devextreme/data/custom_store";
 
-const MILLISECONDS_IN_DAY = 1000 * 60 * 60 * 24;
-const url = "https://js.devexpress.com/Demos/NetCore/api/TreeListTasks";
-const tasksDataSource = createStore({
-  key: "Task_ID",
-  loadUrl: `${url}/Tasks`,
-  onBeforeSend(method, ajaxOptions) {
-    ajaxOptions.xhrFields = { withCredentials: true };
-  },
+const usersDataSource = new CustomStore({
+  key: "UserName",
+  load: async (loadOptions) => {
+    let url = '/odata/Users?';
+    const params = new URLSearchParams();
+    
+    // Handle filtering
+    if (loadOptions.filter) {
+      const filterStr = buildODataFilter(loadOptions.filter);
+      if (filterStr) {
+        params.append('$filter', filterStr);
+      }
+    }
+    
+    // Handle pagination
+    if (loadOptions.skip) {
+      params.append('$skip', loadOptions.skip.toString());
+    }
+    if (loadOptions.take) {
+      params.append('$top', loadOptions.take.toString());
+    }
+    
+    // Handle sorting
+    if (loadOptions.sort) {
+      const sortArray = Array.isArray(loadOptions.sort) ? loadOptions.sort : [loadOptions.sort];
+      const sortStr = sortArray
+        .map((s: any) => `${s.selector} ${s.desc ? 'desc' : 'asc'}`)
+        .join(',');
+      params.append('$orderby', sortStr);
+    }
+    
+    params.append('$count', 'true');
+    
+    const response = await fetch(url + params.toString());
+    const data = await response.json();
+    
+    return {
+      data: data.value || [],
+      totalCount: data['@odata.count'] || data.value?.length || 0
+    };
+  }
 });
-const employeesDataSource = createStore({
-  key: "ID",
-  loadUrl: `${url}/TaskEmployees`,
-  onBeforeSend(method, ajaxOptions) {
-    ajaxOptions.xhrFields = { withCredentials: true };
-  },
-});
-const selectionFilter = ["Task_Status", "=", "Completed"];
 
-let dataGrid: DataGridTypes.InitializedEvent["component"];
+// Helper function to build OData filter expressions
+function buildODataFilter(filter: any): string {
+  if (!filter) return '';
+  
+  // Handle array of filters (AND/OR operations)
+  if (Array.isArray(filter)) {
+    if (filter.length === 0) return '';
+    
+    // Check if it's a simple filter: [field, operator, value]
+    // Simple filters have exactly 3 elements and the second is an operator
+    const operators = ['=', '<>', '>', '>=', '<', '<=', 'contains', 'startswith', 'endswith'];
+    if (filter.length === 3 && operators.includes(filter[1])) {
+      const [field, op, value] = filter;
+      console.log('Building filter for:', field, op, value);
+      // Handle Source Tags filtering
+      if (field === 'SourceTags' || (typeof field === 'string' && field.includes('SourceTags'))) {
+        return `SourceTags/any(tag: tag eq '${value}')`;
+      }
+          console.log('Building filter for:', field, op, value);
+      // Regular field filtering (only equals is used for header filters)
+      if (op === '=') {
+        return `${field} eq '${value}'`;
+      }
+      
+      return `${field} eq '${value}'`;
+    }
+    
+    // Otherwise, it's a logical operation (AND/OR between filters)
+    const parts: string[] = [];
+    let operator = 'and';
+    
+    for (let i = 0; i < filter.length; i++) {
+      if (filter[i] === 'and' || filter[i] === 'or' || filter[i] === '!') {
+        operator = filter[i];
+      } else {
+        const part = buildODataFilter(filter[i]);
+        if (part) parts.push(part);
+      }
+    }
+    
+    if (parts.length === 0) return '';
+    if (parts.length === 1) return parts[0];
+    return `(${parts.join(` ${operator} `)})`;
+  }
+  
+  return '';
+}
 
 const App = () => {
-  const [taskCount, setTaskCount] = useState(0);
-  const [peopleCount, setPeopleCount] = useState(0);
-  const [avgDuration, setAvgDuration] = useState(0);
-
-  const calculateStatistics = useCallback(async () => {
-    const selectedItems = (await dataGrid?.getSelectedRowsData()) ?? [];
-
-    const totalDuration = selectedItems.reduce(
-      (
-        currentValue: number,
-        item: { Task_Due_Date: string; Task_Start_Date: string }
-      ) => {
-        const dueDateTime = new Date(item.Task_Due_Date).getTime();
-        const startDateTime = new Date(item.Task_Start_Date).getTime();
-        const duration = dueDateTime - startDateTime;
-
-        return currentValue + duration;
-      },
-      0
-    );
-    const averageDurationInDays =
-      totalDuration / MILLISECONDS_IN_DAY / selectedItems.length;
-
-    setTaskCount(selectedItems.length);
-    setPeopleCount(
-      query(selectedItems).groupBy("Task_Assigned_Employee_ID").toArray().length
-    );
-    setAvgDuration(Math.round(averageDurationInDays) || 0);
-  }, []);
-
-  const onInitialized = useCallback(
-    (e: DataGridTypes.InitializedEvent) => {
-      dataGrid = e.component;
-
-      calculateStatistics();
-    },
-    [calculateStatistics]
-  );
 
   return (
     <div>
+      <h2>DevExtreme DataGrid Demo</h2>
       <DataGrid
         id="grid-container"
-        dataSource={tasksDataSource}
+        dataSource={usersDataSource}
         remoteOperations={true}
         showBorders={true}
-        defaultSelectionFilter={selectionFilter}
-        onInitialized={onInitialized}
       >
         <Selection mode="multiple" deferred={true} />
-        <FilterRow visible={true} />
         <HeaderFilter visible={true} />
         <Pager visible={true} />
-        <Column caption="Subject" dataField="Task_Subject" />
-        <Column
-          caption="Start Date"
-          dataField="Task_Start_Date"
-          width="auto"
-          dataType="date"
-        />
-        <Column
-          caption="Due Date"
-          dataField="Task_Due_Date"
-          width="auto"
-          dataType="date"
-        />
-        <Column
-          caption="Assigned To"
-          dataField="Task_Assigned_Employee_ID"
-          width="auto"
-          allowSorting={false}
-        >
-          <Lookup
-            dataSource={employeesDataSource}
-            valueExpr="ID"
-            displayExpr="Name"
+        <Column caption="Username" dataField="UserName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
+        <Column caption="First Name" dataField="FirstName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
+        <Column caption="Last Name" dataField="LastName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
+        <Column caption="Gender" dataField="Gender" width="auto" allowFiltering={true} allowHeaderFiltering={true}>
+          <HeaderFilter 
+            allowSelectAll={false}
+            dataSource={[
+              { text: 'Male', value: 'Male' },
+              { text: 'Female', value: 'Female' }
+            ]}
           />
         </Column>
-        <Column caption="Status" width="auto" dataField="Task_Status">
-          <HeaderFilter allowSelectAll={false}></HeaderFilter>
+        <Column 
+          caption="Source Tags" 
+          width="auto"
+          dataField="SourceTags"
+          calculateCellValue={(rowData: any) => {
+            const sourceTags = rowData.SourceTags ?? [];
+            return sourceTags.join(', ');
+          }}
+          allowFiltering={true}
+          allowHeaderFiltering={true}
+        >
+          <HeaderFilter 
+            allowSelectAll={true}
+            dataSource={[
+              { text: 'Provider A', value: 'Provider A' },
+              { text: 'Provider B', value: 'Provider B' },
+              { text: 'Provider C', value: 'Provider C' },
+              { text: 'Windows', value: 'Windows' }
+            ]}
+          />
         </Column>
       </DataGrid>
-      <div className="selection-summary center">
-        <Button
-          id="calculateButton"
-          text="Get statistics on the selected tasks"
-          type="default"
-          onClick={calculateStatistics}
-        />
-        <div>
-          <div className="column">
-            <span className="text count">Task count:</span>
-            &nbsp;
-            <span className="value">{taskCount}</span>
-          </div>
-          &nbsp;
-          <div className="column">
-            <span className="text people-count">People assigned:</span>
-            &nbsp;
-            <span className="value">{peopleCount}</span>
-          </div>
-          &nbsp;
-          <div className="column">
-            <span className="text avg-duration">
-              Average task duration (days):
-            </span>
-            &nbsp;
-            <span className="value">{avgDuration}</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
