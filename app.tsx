@@ -2,9 +2,9 @@ import React, { useCallback, useState } from "react";
 
 import DataGrid, {
   Column,
-  FilterRow,
   Selection,
-  Pager,
+  Scrolling,
+  Paging,
   HeaderFilter,
 } from "devextreme-react/data-grid";
 import type { DataGridTypes } from "devextreme-react/data-grid";
@@ -19,7 +19,9 @@ const usersDataSource = new CustomStore({
     
     // Handle filtering
     if (loadOptions.filter) {
+      console.log('Filter received:', JSON.stringify(loadOptions.filter, null, 2));
       const filterStr = buildODataFilter(loadOptions.filter);
+      console.log('OData filter string:', filterStr);
       if (filterStr) {
         params.append('$filter', filterStr);
       }
@@ -47,13 +49,21 @@ const usersDataSource = new CustomStore({
     const response = await fetch(url + params.toString());
     const data = await response.json();
     
+    // Post-process: Add sourceTag property to each item
+    const processedData = (data.value || []).map((item: any) => ({
+      ...item,
+      sourceTagsFlat: item.SourceTags ? item.SourceTags.join(', ') : ''
+    }));
+    
     return {
-      data: data.value || [],
+      data: processedData,
       totalCount: data['@odata.count'] || data.value?.length || 0
     };
   }
 });
-
+  const calculateSourceTagsFilter = (filterValue: any) => {
+    return ['sourceTagsFlat', 'contains', `${filterValue}`];
+  };
 // Helper function to build OData filter expressions
 function buildODataFilter(filter: any): string {
   if (!filter) return '';
@@ -64,15 +74,20 @@ function buildODataFilter(filter: any): string {
     
     // Check if it's a simple filter: [field, operator, value]
     // Simple filters have exactly 3 elements and the second is an operator
-    const operators = ['=', '<>', '>', '>=', '<', '<=', 'contains', 'startswith', 'endswith'];
+    const operators = ['=', '<>', '>', '>=', '<', '<=', 'contains', 'startswith', 'endswith', 'any'];
     if (filter.length === 3 && operators.includes(filter[1])) {
       const [field, op, value] = filter;
-      console.log('Building filter for:', field, op, value);
+      
+      // Handle 'any' operator for collections (like SourceTags)
+      if (op === 'any') {
+        return `${field}/any(${value})`;
+      }
+      
       // Handle Source Tags filtering
-      if (field === 'SourceTags' || (typeof field === 'string' && field.includes('SourceTags'))) {
+      if (field === 'sourceTagsFlat' || (typeof field === 'string' && field.includes('SourceTags'))) {
         return `SourceTags/any(tag: tag eq '${value}')`;
       }
-          console.log('Building filter for:', field, op, value);
+      
       // Regular field filtering (only equals is used for header filters)
       if (op === '=') {
         return `${field} eq '${value}'`;
@@ -113,9 +128,21 @@ const App = () => {
         remoteOperations={true}
         showBorders={true}
       >
-        <Selection mode="multiple" deferred={true} />
+        <Selection 
+          mode="multiple" 
+          deferred={true}  
+          selectAllMode="allPages"
+          allowSelectAll
+          showCheckBoxesMode="always" />
         <HeaderFilter visible={true} />
-        <Pager visible={true} />
+        {/* <Pager visible={true} /> */}
+        <Paging enabled defaultPageSize={10} />
+        <Scrolling
+          mode="infinite"
+          preloadEnabled
+          useNative={false}
+          columnRenderingMode="virtual"
+        />
         <Column caption="Username" dataField="UserName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
         <Column caption="First Name" dataField="FirstName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
         <Column caption="Last Name" dataField="LastName" width="auto" allowFiltering={false} allowHeaderFiltering={false} />
@@ -131,16 +158,14 @@ const App = () => {
         <Column 
           caption="Source Tags" 
           width="auto"
-          dataField="SourceTags"
-          calculateCellValue={(rowData: any) => {
-            const sourceTags = rowData.SourceTags ?? [];
-            return sourceTags.join(', ');
-          }}
+          filterType="include"
+          dataField="sourceTagsFlat"
+          calculateFilterExpression={calculateSourceTagsFilter}
           allowFiltering={true}
           allowHeaderFiltering={true}
         >
           <HeaderFilter 
-            allowSelectAll={true}
+            allowSelectAll={false}
             dataSource={[
               { text: 'Provider A', value: 'Provider A' },
               { text: 'Provider B', value: 'Provider B' },
