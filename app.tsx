@@ -1,5 +1,3 @@
-import React, { useCallback, useState } from "react";
-
 import DataGrid, {
   Column,
   Selection,
@@ -7,36 +5,49 @@ import DataGrid, {
   Paging,
   HeaderFilter,
 } from "devextreme-react/data-grid";
-import type { DataGridTypes } from "devextreme-react/data-grid";
-import Button from "devextreme-react/button";
 import ODataStore from 'devextreme/data/odata/store';
 
 const usersDataSource = new ODataStore({
   key: "UserName",
   url: "/odata/Users",
   version: 4,
-  beforeSend(request) {
+  filterToLower: false, // Disable automatic tolower() for all filters
+  beforeSend(request) { 
     // Intercept and fix filter for collection properties
     if (request.params && request.params.$filter) {
+      console.log('Original filter:', request.params.$filter);
+      
       // Replace contains on SourceTags collection with proper any lambda
       request.params.$filter = request.params.$filter.replace(
-        /contains\(tolower\(SourceTags\),\s*'([^']+)'\)/gi,
-        (match: string, value: string) => {
-          // Capitalize first letter of each word to match exact values
-          const formatted = value.split(' ').map((word: string) => 
-            word.charAt(0).toUpperCase() + word.slice(1)
-          ).join(' ');
-          return `SourceTags/any(tag: tag eq '${formatted}')`;
+        /contains\(SourceTags,\s*'([^']+)'\)/gi,
+        (_match: string, value: string) => {
+          return `SourceTags/any(tag: tag eq '${value}')`;
         }
       );
+      console.log('After SourceTags modification:', request.params.$filter);
+      
+      // Replace contains on scannersFlat with proper Scanners collection any lambda
+      request.params.$filter = request.params.$filter.replace(
+        /contains\(scannersFlat,\s*'([^']+)'\)/gi,
+        (_match: string, value: string) => {
+          return `(Scanners/any(s: s/ScannerName eq '${value}'))`;
+        }
+      );
+      
+      console.log('Modified filter:', request.params.$filter);
     }
   },
   onLoaded(result) {
-    // Post-process: Add sourceTagsFlat property to each item
-    return result.map((item: any) => ({
-      ...item,
-      sourceTagsFlat: item.SourceTags ? item.SourceTags.join(', ') : ''
-    }));
+    console.log('onLoaded called with result:', result);
+    return result.map((item: any) => {
+      const scannersFlat = item.Scanners ? item.Scanners.map((s: any) => s.ScannerName).join(', ') : '';
+      // console.log('Processing item:', item, 'ScannersFlat:', scannersFlat);
+      return {
+        ...item,
+        sourceTagsFlat: item.SourceTags ? item.SourceTags.join(', ') : '',
+        scannersFlat
+      };
+    });
   }
 });
 
@@ -44,8 +55,22 @@ const calculateSourceTagsFilter = (filterValue: any) => {
   return ['SourceTags', 'contains', filterValue];
 };
 
-const App = () => {
+const calculateScannersFilter = (filterValue: any) => {
+  return ['scannersFlat', 'contains', filterValue];
+};
 
+const calculateScannersCellValue = (rowData: any) => {
+  if (rowData.scannersFlat) {
+    return rowData.scannersFlat;
+  }
+  const scanners = rowData.Scanners ?? [];
+  if (Array.isArray(scanners) && scanners.length > 0) {
+    return scanners.map((s: any) => s.ScannerName).join(', ');
+  }
+  return '';
+};
+
+const App = () => {
   return (
     <div>
       <h2>DevExtreme DataGrid Demo</h2>
@@ -57,12 +82,11 @@ const App = () => {
       >
         <Selection 
           mode="multiple" 
-          deferred={true}  
+          deferred 
           selectAllMode="allPages"
           allowSelectAll
           showCheckBoxesMode="always" />
         <HeaderFilter visible={true} />
-        {/* <Pager visible={true} /> */}
         <Paging enabled defaultPageSize={10} />
         <Scrolling
           mode="infinite"
@@ -101,6 +125,26 @@ const App = () => {
               { text: 'Provider B', value: 'Provider B' },
               { text: 'Provider C', value: 'Provider C' },
               { text: 'Windows', value: 'Windows' }
+            ]}
+          />
+        </Column>
+        <Column 
+          caption="Scanner" 
+          width="auto"
+          dataField="scannersFlat"
+          calculateFilterExpression={calculateScannersFilter}
+          calculateCellValue={calculateScannersCellValue}
+          allowFiltering={true}
+          allowHeaderFiltering={true}
+        >
+          <HeaderFilter 
+            allowSelectAll={false}
+            dataSource={[
+              { text: 'Nessus', value: 'NessusScanner' },
+              { text: 'Qualys', value: 'QualysScanner' },
+              { text: 'Rapid7', value: 'Rapid7Scanner' },
+              { text: 'Tenable', value: 'TenableScanner' },
+              { text: 'OpenVAS', value: 'OpenVASScanner' }
             ]}
           />
         </Column>
